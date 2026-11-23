@@ -40,7 +40,7 @@ function setStatus(s) { status = s; emit({ t: "status", v: s }); }
 function start(cmd) {
   if (proc) return false;
   log("[panel] Menjalankan: " + cmd + "\n");
-  const p = spawn("sh", ["-c", cmd], { cwd: ROOT, detached: true, env: { ...process.env, SERVER_PORT: "8080" } });
+  const p = spawn("sh", ["-c", cmd], { cwd: ROOT, detached: true, env: { ...process.env, SERVER_PORT: "8080", PATH: nodePath() } });
   proc = p; startedAt = Date.now(); setStatus("on");
   p.stdout.on("data", log); p.stderr.on("data", log);
   p.on("error", e => log("[panel] Error: " + e.message + "\n"));
@@ -80,6 +80,50 @@ async function stats() {
     cpu: Math.round(cpu * 10) / 10, cores: os.cpus().length,
     mem: mem * 1024, memTotal: os.totalmem(), disk: diskCache.v, rx, tx
   };
+}
+
+// ---------- versi Node.js ----------
+const NODES = path.join(DATA, "node"), MAJORS = [18, 20, 22, 24], ANDROID = process.platform === "android";
+fs.mkdirSync(NODES, { recursive: true });
+const ARCH = { x64: "x64", arm64: "arm64", arm: "armv7l" }[process.arch];
+const nodeBin = n => path.join(NODES, n, "bin");
+function nodePath() {
+  const n = cfg.node;
+  return n && fs.existsSync(path.join(nodeBin(n), "node")) ? nodeBin(n) + path.delimiter + process.env.PATH : process.env.PATH;
+}
+function nodeList() {
+  return fs.readdirSync(NODES, { withFileTypes: true })
+    .filter(e => e.isDirectory() && /^node-v\d+\./.test(e.name) && fs.existsSync(path.join(nodeBin(e.name), "node")))
+    .map(e => ({ name: e.name, version: e.name.split("-")[1], major: +e.name.match(/^node-v(\d+)\./)[1] }));
+}
+const getUrl = (url, hops = 5) => new Promise((ok, no) => {
+  require("https").get(url, { headers: { "User-Agent": "panel-server" } }, r => {
+    if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && hops > 0) { r.resume(); return ok(getUrl(new URL(r.headers.location, url).href, hops - 1)); }
+    if (r.statusCode !== 200) { r.resume(); return no(new Error("HTTP " + r.statusCode)); }
+    ok(r);
+  }).on("error", no).setTimeout(30000, function () { this.destroy(new Error("Koneksi timeout")); });
+});
+const readAll = r => new Promise((ok, no) => { let b = ""; r.on("data", c => b += c); r.on("end", () => ok(b)); r.on("error", no); });
+let nodeBusy = false;
+async function installNode(major) {
+  nodeBusy = true;
+  try {
+    if (!ARCH) throw new Error("Arsitektur " + process.arch + " tidak didukung");
+    log("[panel] Mencari Node " + major + " terbaru...\n");
+    const idx = JSON.parse(await readAll(await getUrl("https://nodejs.org/dist/index.json")));
+    const v = (idx.find(x => x.version.startsWith("v" + major + ".")) || {}).version;
+    if (!v) throw new Error("Versi " + major + " tidak ditemukan");
+    const name = "node-" + v + "-linux-" + ARCH, file = path.join(NODES, name + ".tar.xz");
+    if (fs.existsSync(nodeBin(name))) { log("[panel] " + v + " sudah terpasang\n"); return; }
+    log("[panel] Mengunduh " + v + " (sekitar 25-30 MB)...\n");
+    const r = await getUrl("https://nodejs.org/dist/" + v + "/" + name + ".tar.xz");
+    await new Promise((ok, no) => { const w = fs.createWriteStream(file); r.pipe(w); w.on("finish", ok); w.on("error", no); r.on("error", no); });
+    log("[panel] Mengekstrak...\n");
+    await new Promise((ok, no) => execFile("tar", ["-xJf", file, "-C", NODES], { timeout: 180000 }, e => e ? no(new Error("Gagal ekstrak (butuh tar dan xz): " + e.message)) : ok()));
+    fs.rmSync(file, { force: true });
+    log("[panel] Node " + v + " terpasang. Pilih 'Pakai' di Setup.\n");
+  } catch (e) { log("[panel] Gagal pasang Node: " + e.message + "\n"); }
+  finally { nodeBusy = false; }
 }
 
 // ---------- util ----------
@@ -173,6 +217,35 @@ http.createServer(async (req, res) => {
       if (!t) return json(res, 400, { error: "Tipe tidak dikenal" });
       if (!start(t.install)) return json(res, 400, { error: "Hentikan server dulu" });
       return json(res, 200, { ok: true });
+    }
+
+    // --- versi Node.js ---
+    if (p === "/api/node" && req.method === "GET")
+      return json(res, 200, { system: process.version, android: ANDROID, majors: MAJORS, installed: nodeList(), active: cfg.node || "", busy: nodeBusy });
+    if (p === "/api/node/install" && req.method === "POST") {
+      const { major } = await readBody(req);
+      if (ANDROID) return json(res, 400, { error: "Termux tidak bisa memakai Node resmi. Gunakan tombol Node LTS / Terbaru." });
+      if (!MAJORS.includes(+major)) return json(res, 400, { error: "Versi tidak tersedia" });
+      if (nodeBusy) return json(res, 400, { error: "Instalasi lain masih berjalan" });
+      installNode(+major); return json(res, 200, { ok: true });
+    }
+    if (p === "/api/node/pkg" && req.method === "POST") {
+      const { pkg } = await readBody(req);
+      if (!ANDROID) return json(res, 400, { error: "Hanya untuk Termux" });
+      if (!["nodejs", "nodejs-lts"].includes(pkg)) return json(res, 400, { error: "Paket tidak dikenal" });
+      if (!start("pkg install -y " + pkg)) return json(res, 400, { error: "Hentikan server dulu" });
+      return json(res, 200, { ok: true });
+    }
+    if (p === "/api/node/use" && req.method === "POST") {
+      const { name } = await readBody(req);
+      if (name && !nodeList().some(n => n.name === name)) return json(res, 400, { error: "Versi belum terpasang" });
+      cfg.node = name || ""; saveCfg(); return json(res, 200, { ok: true });
+    }
+    if (p === "/api/node/remove" && req.method === "POST") {
+      const { name } = await readBody(req);
+      if (!nodeList().some(n => n.name === name)) return json(res, 400, { error: "Versi tidak ditemukan" });
+      if (cfg.node === name) { cfg.node = ""; saveCfg(); }
+      fs.rmSync(path.join(NODES, name), { recursive: true, force: true }); return json(res, 200, { ok: true });
     }
 
     // --- file manager ---
