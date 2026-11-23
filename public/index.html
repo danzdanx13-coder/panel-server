@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel Server</title>
+<style>
+:root{--bg:#f3efe4;--rd:#ff3b3b;--bk:#111;box-sizing:border-box}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg) radial-gradient(#0003 1px,transparent 1px) 0 0/16px 16px;color:var(--bk);font:14px/1.4 system-ui,sans-serif;min-height:100vh}
+button,input,select,textarea{font:inherit}
+.btn{background:var(--rd);color:#fff;font-weight:700;border:3px solid var(--bk);border-radius:16px;padding:8px 14px;box-shadow:3px 3px 0 var(--bk);cursor:pointer}
+.btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--bk)}
+.btn.s{padding:4px 10px;font-size:12px;border-radius:12px;border-width:2px;box-shadow:2px 2px 0 var(--bk)}
+.btn.w{background:#fff;color:var(--bk)}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;position:sticky;top:0;background:var(--bg);z-index:5;border-bottom:3px solid var(--bk)}
+header b{flex:1;line-height:1.1}
+header small{font-size:13px}
+.card{background:#fff;border:3px solid var(--bk);border-radius:20px;box-shadow:5px 5px 0 var(--bk);padding:14px;margin:14px;max-width:720px}
+@media(min-width:760px){.card{margin:14px auto}}
+input,select,textarea{width:100%;border:3px solid var(--bk);border-radius:14px;padding:9px 12px;background:#fff}
+textarea{font:12px monospace;min-height:300px;border-radius:12px}
+#menu{position:absolute;top:56px;left:14px;z-index:6;display:flex;flex-direction:column;gap:8px}
+#term{background:#111;color:#d6ffd6;font:11px/1.35 monospace;height:300px;overflow-y:auto;padding:10px;border-radius:14px;white-space:pre-wrap;word-break:break-all;margin:10px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.tile{background:#111;color:#fff;border-radius:14px;padding:10px;min-width:0;word-break:break-all}
+.tile small{color:#aaa;display:block;font-size:11px}
+.tile b{font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:2px dashed #bbb}
+.item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.item small{color:#666}
+h3{margin:0 0 8px}
+.st{font-weight:700}
+.err{color:#c00;font-weight:700;min-height:18px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="login" class="card" style="margin-top:12vh">
+  <h3>Masuk Panel</h3>
+  <div class="row"><input id="lu" placeholder="Username" autocomplete="username"></div>
+  <div class="row"><input id="lp" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key=='Enter')login()"></div>
+  <div class="err" id="le"></div>
+  <button class="btn" onclick="login()">Masuk</button>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <button class="btn s" onclick="$('menu').hidden=!$('menu').hidden">Menu</button>
+    <b>Panel<br>Server</b><small id="who"></small>
+    <button class="btn s" onclick="out()">Keluar</button>
+  </header>
+  <div id="menu" hidden>
+    <button class="btn" onclick="go('console')">Console</button>
+    <button class="btn" onclick="go('files')">File Manager</button>
+    <button class="btn" onclick="go('backup')">Backup</button>
+    <button class="btn" onclick="go('setup')">Setup</button>
+  </div>
+
+  <section id="v-console" class="card">
+    <div class="row">
+      <button class="btn s" onclick="power('start')">Start</button>
+      <button class="btn s" onclick="power('restart')">Restart</button>
+      <button class="btn s" onclick="power('stop')">Stop</button>
+    </div>
+    <div class="st" id="stl">Berhenti</div>
+    <div id="term"></div>
+    <input id="cmd" placeholder="Ketik perintah lalu Enter" onkeydown="if(event.key=='Enter')sendCmd()">
+    <div class="grid">
+      <div class="tile"><small>Address</small><b id="t-addr"></b></div>
+      <div class="tile"><small>Uptime</small><b id="t-up">-</b></div>
+      <div class="tile"><small>CPU Load</small><b id="t-cpu">-</b></div>
+      <div class="tile"><small>Memory</small><b id="t-mem">-</b></div>
+      <div class="tile"><small>Disk</small><b id="t-disk">-</b></div>
+      <div class="tile"><small>Network (Inbound)</small><b id="t-rx">-</b></div>
+      <div class="tile"><small>Network (Outbound)</small><b id="t-tx">-</b></div>
+    </div>
+  </section>
+
+  <section id="v-files" class="card" hidden>
+    <h3>File Manager</h3>
+    <div class="row">
+      <label class="btn s">Upload<input id="up" type="file" multiple hidden onchange="upload(this.files)"></label>
+      <button class="btn s w" onclick="mk(false)">+ Folder</button>
+      <button class="btn s w" onclick="mk(true)">+ File</button>
+      <button class="btn s w" onclick="up_()">⬆ Naik</button>
+    </div>
+    <div id="cwd" style="font-weight:700;margin:6px 0"></div>
+    <div id="flist"></div>
+  </section>
+
+  <section id="v-edit" class="card" hidden>
+    <h3 id="etitle"></h3>
+    <textarea id="etext" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="btn s" onclick="saveEdit()">Simpan</button>
+      <button class="btn s w" onclick="go('files')">Tutup</button>
+    </div>
+  </section>
+
+  <section id="v-backup" class="card" hidden>
+    <h3>Backup</h3>
+    <button class="btn s" onclick="mkBackup()">Buat Backup</button>
+    <div id="blist"></div>
+  </section>
+
+  <section id="v-setup" class="card" hidden>
+    <h3>Setup</h3>
+    <div>Perintah start</div>
+    <div class="row"><input id="scmd"></div>
+    <button class="btn s" onclick="saveCmd()">Simpan</button>
+    <hr>
+    <div class="row">
+      <button class="btn s" onclick="inst('node')">npm install</button>
+      <button class="btn s" onclick="inst('python')">pip install</button>
+    </div>
+    <p style="font-size:12px">Server harus berhenti saat install. Prosesnya terlihat di tab Console.</p>
+    <hr>
+    <b>Buat proyek cepat</b>
+    <div class="row">
+      <button class="btn s" onclick="tpl('node')">Node.js (Express)</button>
+      <button class="btn s" onclick="tpl('python')">Python (Flask)</button>
+    </div>
+    <p style="font-size:12px">File awal dibuat di folder utama File Manager (menimpa file dengan nama sama kalau sudah ada).</p>
+  </section>
+</div>
+
+<script>
+const $=i=>document.getElementById(i);
+let T=localStorage.getItem("t")||"",cwd="",editing="",es=null,poll=null,status="off";
+const VIEWS=["console","files","edit","backup","setup"];
+
+async function api(p,o={}){
+  o.headers=Object.assign({Authorization:"Bearer "+T},o.headers||{});
+  if(o.json){o.method="POST";o.headers["Content-Type"]="application/json";o.body=JSON.stringify(o.json)}
+  const r=await fetch(p,o);
+  if(r.status==401&&T){out();throw new Error("Sesi habis")}
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||"Gagal");
+  return d;
+}
+const fail=e=>alert(e.message);
+async function login(){
+  try{
+    const d=await api("/api/login",{json:{user:$("lu").value,pass:$("lp").value}});
+    T=d.token;localStorage.setItem("t",T);boot();
+  }catch(e){$("le").textContent=e.message}
+}
+function out(){
+  T="";localStorage.removeItem("t");
+  if(es)es.close();clearInterval(poll);
+  $("app").hidden=true;$("login").hidden=false;
+}
+async function boot(){
+  try{
+    const s=await api("/api/state");
+    $("login").hidden=true;$("app").hidden=false;$("who").textContent=s.user;
+    $("t-addr").textContent=location.host;
+    connect();stats();poll=setInterval(stats,2000);go("console");
+  }catch(e){}
+}
+function go(v){
+  $("menu").hidden=true;
+  VIEWS.forEach(x=>$("v-"+x).hidden=x!=v);
+  if(v=="files")loadFiles();
+  if(v=="backup")loadBackups();
+  if(v=="setup")api("/api/state").then(s=>$("scmd").value=s.startCmd);
+}
+
+// ---- console ----
+function setStatus(s){status=s;$("stl").textContent=s=="on"?"Berjalan":"Berhenti"}
+function connect(){
+  if(es)es.close();
+  const term=$("term");
+  es=new EventSource("/api/console?token="+T);
+  es.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.t=="init"){term.textContent=m.v;setStatus(m.s)}
+    else if(m.t=="log")term.textContent+=m.v;
+    else if(m.t=="status")setStatus(m.v);
+    if(term.textContent.length>60000)term.textContent=term.textContent.slice(-40000);
+    term.scrollTop=term.scrollHeight;
+  };
+}
+const power=a=>api("/api/power",{json:{action:a}}).catch(fail);
+async function sendCmd(){
+  const i=$("cmd"),v=i.value;if(!v)return;i.value="";
+  api("/api/command",{json:{cmd:v}}).catch(fail);
+}
+const fmt=n=>n==null?"-":n>=1073741824?(n/1073741824).toFixed(2)+" GB":(n/1048576).toFixed(1)+" MB";
+function dur(s){
+  if(!s)return "-";
+  const h=Math.floor(s/3600),m=Math.floor(s%3600/60);
+  return (h?h+"j ":"")+m+"m "+s%60+"d";
+}
+async function stats(){
+  try{
+    const s=await api("/api/stats");
+    $("t-up").textContent=dur(s.uptime);
+    $("t-cpu").textContent=(s.status=="on"?s.cpu+"%":"-")+" / "+s.cores+" core";
+    $("t-mem").textContent=(s.status=="on"?fmt(s.mem):"-")+" / "+Math.round(s.memTotal/1048576)+" MB";
+    $("t-disk").textContent=fmt(s.disk);
+    $("t-rx").textContent=fmt(s.rx);$("t-tx").textContent=fmt(s.tx);
+  }catch(e){}
+}
+
+// ---- file manager ----
+const join=(a,b)=>(a?a+"/":"")+b;
+async function loadFiles(){
+  try{
+    const d=await api("/api/files?path="+encodeURIComponent(cwd));
+    $("cwd").textContent="/"+cwd;
+    const box=$("flist");box.textContent="";
+    if(!d.files.length)box.textContent="Folder kosong.";
+    d.files.forEach(f=>{
+      const row=document.createElement("div");row.className="item";
+      const nm=document.createElement("span");nm.textContent=(f.dir?"📁 ":"📄 ")+f.name;
+      nm.onclick=()=>f.dir?(cwd=join(cwd,f.name),loadFiles()):edit(join(cwd,f.name));
+      row.append(nm);
+      if(!f.dir){const sz=document.createElement("small");sz.textContent=(f.size/1024).toFixed(1)+" KB";row.append(sz)}
+      row.append(btn("Rename",async()=>{
+        const n=prompt("Nama baru:",f.name);
+        if(n&&n!=f.name)api("/api/rename",{json:{path:join(cwd,f.name),to:n}}).then(loadFiles).catch(fail);
+      }),btn("Hapus",()=>{
+        if(confirm("Hapus "+f.name+"?"))api("/api/delete",{json:{path:join(cwd,f.name)}}).then(loadFiles).catch(fail);
+      }));
+      box.append(row);
+    });
+  }catch(e){fail(e)}
+}
+function btn(t,fn){const b=document.createElement("button");b.className="btn s";b.textContent=t;b.onclick=fn;return b}
+function up_(){cwd=cwd.split("/").slice(0,-1).join("/");loadFiles()}
+async function upload(files){
+  for(const f of files){
+    try{await api("/api/upload?path="+encodeURIComponent(cwd)+"&name="+encodeURIComponent(f.name),{method:"POST",body:f})}
+    catch(e){fail(e)}
+  }
+  $("up").value="";loadFiles();
+}
+async function mk(isFile){
+  const n=prompt(isFile?"Nama file:":"Nama folder:");if(!n)return;
+  try{
+    if(isFile)await api("/api/save",{json:{path:join(cwd,n),content:""}});
+    else await api("/api/mkdir",{json:{path:cwd,name:n}});
+    loadFiles();
+  }catch(e){fail(e)}
+}
+async function edit(p){
+  try{
+    const d=await api("/api/file?path="+encodeURIComponent(p));
+    editing=p;$("etitle").textContent=p;$("etext").value=d.content;go("edit");
+  }catch(e){fail(e)}
+}
+const saveEdit=()=>api("/api/save",{json:{path:editing,content:$("etext").value}}).then(()=>alert("Tersimpan")).catch(fail);
+
+// ---- backup ----
+async function loadBackups(){
+  const d=await api("/api/backups"),box=$("blist");box.textContent="";
+  if(!d.backups.length)box.textContent="Belum ada backup.";
+  d.backups.forEach(b=>{
+    const row=document.createElement("div");row.className="item";
+    const nm=document.createElement("span");nm.textContent=b.name;
+    const sz=document.createElement("small");sz.textContent=(b.size/1024).toFixed(0)+" KB";
+    const dl=document.createElement("a");dl.href="/api/backup/download?name="+encodeURIComponent(b.name)+"&token="+T;
+    dl.append(btn("Unduh",()=>{}));
+    row.append(nm,sz,dl,btn("Restore",()=>{
+      if(confirm("Restore backup ini? File dengan nama sama akan ditimpa."))
+        api("/api/backup/restore",{json:{name:b.name}}).then(()=>alert("Restore selesai")).catch(fail);
+    }),btn("Hapus",()=>api("/api/backup/delete",{json:{name:b.name}}).then(loadBackups).catch(fail)));
+    box.append(row);
+  });
+}
+async function mkBackup(){try{await api("/api/backups",{method:"POST"});loadBackups()}catch(e){fail(e)}}
+
+// ---- setup ----
+const saveCmd=()=>api("/api/config",{json:{startCmd:$("scmd").value}}).then(()=>alert("Tersimpan")).catch(fail);
+const inst=t=>api("/api/install",{json:{type:t}}).then(()=>go("console")).catch(fail);
+const tpl=t=>api("/api/template",{json:{type:t}}).then(d=>{$("scmd").value=d.startCmd;alert("Proyek dibuat. Perintah start: "+d.startCmd)}).catch(fail);
+
+if(T)boot();
+</script>
+</body>
+</html>
